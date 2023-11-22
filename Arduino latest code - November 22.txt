@@ -1,0 +1,128 @@
+#include <ESP8266WiFi.h>
+#include <ESP8266HTTPClient.h>
+
+const char *ssid = "konberj";
+const char *password = "473625FJ";
+const char *serverAddress = "http://192.168.1.5:8080/soil";  // Assuming your Laravel route is /api/datamoist
+
+#define SENSOR_IN A0
+#define SENSOR_PIN D2
+#define FLOW_CALIBRATION_FACTOR 4.5
+const int valve = D3;
+
+volatile byte pulseCount;
+float flowRate;
+unsigned int totalMilliLitres;
+unsigned long oldTime;
+
+void ICACHE_RAM_ATTR pulseCounter() {
+  pulseCount++;
+}
+
+void setup() {
+  Serial.begin(115200);
+  
+  
+  pinMode(SENSOR_PIN, INPUT_PULLUP);
+  pinMode(valve, OUTPUT);
+
+  pulseCount = 0;
+  flowRate = 0.0;
+  totalMilliLitres = 0;
+  oldTime = 0;
+
+  attachInterrupt(digitalPinToInterrupt(SENSOR_PIN), pulseCounter, FALLING);
+  
+  WiFi.begin(ssid, password);
+
+  while (WiFi.status() != WL_CONNECTED) {
+    delay(1000);
+    Serial.println("Connecting to WiFi...");
+  }
+
+  Serial.println("Connected to WiFi");
+}
+
+void loop() {
+  // Sample sensor readings
+  //float moistureLevel = 42.5;
+  //float flowRate = 3.14;
+  String myString;
+  String stringOn;
+  String stringOff;
+  stringOn = "ON";
+  stringOff = "OFF";
+  //unsigned int totalMilliLitres = 1234;
+
+  // Construct the POST data string
+  //String postData = "moisture_level=" + String(moistureLevel, 2) +
+  //                  "&flow_rate=" + String(flowRate, 2) +
+  //                  "&total_milliLitres=" + String(totalMilliLitres);
+
+  
+  
+  unsigned long currentTime = millis();
+  unsigned long elapsedTime = currentTime - oldTime;
+
+  if (elapsedTime > 1000) {
+    detachInterrupt(digitalPinToInterrupt(SENSOR_PIN));
+    flowRate = ((1000.0 / elapsedTime) * pulseCount) / FLOW_CALIBRATION_FACTOR;
+    pulseCount = 0;
+    oldTime = currentTime;
+    attachInterrupt(digitalPinToInterrupt(SENSOR_PIN), pulseCounter, FALLING);
+  }
+
+  // Calculate total water quantity in milliliters (mL) since starting
+  totalMilliLitres += (flowRate / 60) * 1000 * (elapsedTime / 1000.0);
+
+  // Read sensor data
+  int moistureLevel = analogRead(SENSOR_IN);
+  Serial.println();
+  moistureLevel = map(moistureLevel, 550, 10, 0, 100);
+
+  //if(database = manual){
+    //mag base sa status sa database
+  //}
+ // else if(database = automatic){
+      if (moistureLevel < 30) {
+      digitalWrite(valve, LOW); // Turn on the valve
+      Serial.println(stringOn);
+      myString = stringOn;
+      }else {
+        digitalWrite(valve, HIGH);  // Turn off the valve
+        Serial.println(stringOff);
+        myString = stringOff;
+      }
+  //}
+
+
+  
+  // Construct the POST data string
+  String postData = "moisture_level=" + String(moistureLevel) +
+                    "&flow_rate=" + String(flowRate, 2) +
+                    "&total_milliLitres=" + String(totalMilliLitres) +
+                    "&status=" + String(myString);
+
+  WiFiClient client;
+  HTTPClient http;
+
+  http.begin(client, serverAddress);
+  http.addHeader("Content-Type", "application/x-www-form-urlencoded");
+
+  int httpResponseCode = http.POST(postData);
+
+  if (httpResponseCode > 0) {
+    Serial.print("HTTP Response code: ");
+    Serial.println(httpResponseCode);
+
+    String response = http.getString();
+    Serial.println("Server response: " + response);
+  } else {
+    Serial.print("Error in HTTP request. HTTP Response code: ");
+    Serial.println(httpResponseCode);
+  }
+
+  http.end();
+
+  delay(5000); // Adjust the delay as needed
+}
